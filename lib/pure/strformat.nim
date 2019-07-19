@@ -519,11 +519,15 @@ template formatValue(result: var string; value: char; specifier: string) =
 template formatValue(result: var string; value: cstring; specifier: string) =
   result.add value
 
-proc strformatImpl(pattern: NimNode; openChar, closeChar: char): NimNode =
+proc strformatImpl(pattern: NimNode; openStr, closeStr: string): NimNode =
   if pattern.kind notin {nnkStrLit..nnkTripleStrLit}:
     error "string formatting (fmt(), &) only works with string literals", pattern
-  if openChar == ':' or closeChar == ':':
-    error "openChar and closeChar must not be ':'"
+  if openStr.len == 0 or closeStr.len == 0:
+    error "openStr and closeStr must not be empty"
+  if openStr[0] == ':' or closeStr[0] == ':':
+    error "openStr and closeStr must not be ':'"
+  if openStr.startsWith(closeStr & closeStr) or closeStr.startsWith(openStr & openStr):
+    error "openStr must not starts with closeStr & closeStar and vice versa"
   let f = pattern.strVal
   var i = 0
   let res = genSym(nskVar, "fmtRes")
@@ -535,18 +539,18 @@ proc strformatImpl(pattern: NimNode; openChar, closeChar: char): NimNode =
   result.add newVarStmt(res, newCall(bindSym"newStringOfCap", newLit(f.len + expectedGrowth)))
   var strlit = ""
   while i < f.len:
-    if f[i] == openChar:
-      inc i
-      if f[i] == openChar:
-        inc i
-        strlit.add openChar
+    if f.continuesWith(openStr, i):
+      inc i, openStr.len
+      if f.continuesWith(openStr, i):
+        inc i, openStr.len
+        strlit.add openStr
       else:
         if strlit.len > 0:
           result.add newCall(bindSym"add", res, newLit(strlit))
           strlit = ""
 
         var subexpr = ""
-        while i < f.len and f[i] != closeChar and f[i] != ':':
+        while i < f.len and (not f.continuesWith(closeStr, i)) and f[i] != ':':
           subexpr.add f[i]
           inc i
         var x: NimNode
@@ -562,21 +566,21 @@ proc strformatImpl(pattern: NimNode; openChar, closeChar: char): NimNode =
         var options = ""
         if f[i] == ':':
           inc i
-          while i < f.len and f[i] != closeChar:
+          while i < f.len and (not f.continuesWith(closeStr, i)):
             options.add f[i]
             inc i
-        if f[i] == closeChar:
-          inc i
+        if f.continuesWith(closeStr, i):
+          inc i, closeStr.len
         else:
-          doAssert false, "invalid format string: missing '}'"
+          doAssert false, "invalid format string: missing '" & closeStr & "'"
         result.add newCall(formatSym, res, x, newLit(options))
-    elif f[i] == closeChar:
-      if f[i+1] == closeChar:
-        strlit.add closeChar
-        inc i, 2
+    elif f.continuesWith(closeStr, i):
+      if f.continuesWith(closeStr, i+closeStr.len):
+        strlit.add closeStr
+        inc i, closeStr.len * 2
       else:
-        doAssert false, "invalid format string: '}' instead of '}}'"
-        inc i
+        doAssert false, "invalid format string: '" & closeStr & "' instead of '" & closeStr & closeStr & "'"
+        inc i, closeStr.len
     else:
       strlit.add f[i]
       inc i
@@ -586,20 +590,21 @@ proc strformatImpl(pattern: NimNode; openChar, closeChar: char): NimNode =
   when defined(debugFmtDsl):
     echo repr result
 
-macro `&`*(pattern: string): untyped = strformatImpl(pattern, '{', '}')
+macro `&`*(pattern: string): untyped = strformatImpl(pattern, "{", "}")
   ## For a specification of the ``&`` macro, see the module level documentation.
 
-macro fmt*(pattern: string): untyped = strformatImpl(pattern, '{', '}')
+macro fmt*(pattern: string): untyped = strformatImpl(pattern, "{", "}")
   ## An alias for ``&``.
 
-macro fmt*(pattern: string; openChar, closeChar: char): untyped =
+macro fmt*(pattern, openStr, closeStr: string): untyped =
   ## Use ``openChar`` instead of '{' and ``closeChar`` instead of '}'
   runnableExamples:
     let testInt = 123
-    doAssert "<testInt>".fmt('<', '>') == "123"
-    doAssert """(()"foo" & "bar"())""".fmt(')', '(') == "(foobar)"
-    doAssert """ ""{"123+123"}"" """.fmt('"', '"') == " \"{246}\" "
-  strformatImpl(pattern, openChar.intVal.char, closeChar.intVal.char)
+    doAssert "<testInt>".fmt("<", ">") == "123"
+    doAssert """(()"foo" & "bar"())""".fmt(")", "(") == "(foobar)"
+    doAssert """ ""{"123+123"}"" """.fmt("\"", "\"") == " \"{246}\" "
+    doAssert "♪testInt♪".fmt("♪", "♪") == "123"
+  strformatImpl(pattern, openStr.strVal, closeStr.strVal)
 
 when isMainModule:
   template check(actual, expected: string) =

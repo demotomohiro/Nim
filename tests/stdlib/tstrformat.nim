@@ -6,6 +6,7 @@ output: '''Received (name: "Foo", species: "Bar")'''
 # issue #7632
 
 import genericstrformat
+import macros
 
 doAssert works(5) == "formatted  5"
 doAssert fails0(6) == "formatted  6"
@@ -135,33 +136,70 @@ doAssert fmt"{nat:3x}" == " 40"
 doAssert fmt"{nat:3X}" == " 40"
 
 block:
-  template fmt(pattern: string; openCloseChar: char): untyped =
-    fmt(pattern, openCloseChar, openCloseChar)
+  proc testFmt(openStr, closeStr: static string) =
+    macro doAssertFmt(pattern, value, openStr, closeStr: string) =
+      newCall(
+              "doAssert",
+              newTree(
+                      nnkInfix,
+                      newIdentNode("=="),
+                      newCall("fmt", pattern.strVal.newLit, openStr, closeStr),
+                      value.strVal.newLit))
 
-  let
-    testInt = 123
-    testStr = "foobar"
-    testFlt = 3.141592
-  doAssert ">><<".fmt('<', '>') == "><"
-  doAssert " >> << ".fmt('<', '>') == " > < "
-  doAssert "<<>>".fmt('<', '>') == "<>"
-  doAssert " << >> ".fmt('<', '>') == " < > "
-  doAssert "''".fmt('\'') == "'"
-  doAssert "''''".fmt('\'') == "''"
-  doAssert "'' ''".fmt('\'') == "' '"
-  doAssert "<testInt>".fmt('<', '>') == "123"
-  doAssert "<testInt>".fmt('<', '>') == "123"
-  doAssert "'testFlt:1.2f'".fmt('\'') == "3.14"
-  doAssert "<testInt><testStr>".fmt('<', '>') == "123foobar"
-  doAssert """ ""{"123+123"}"" """.fmt('"') == " \"{246}\" "
-  doAssert "(((testFlt:1.2f)))((111))".fmt('(', ')') == "(3.14)(111)"
-  doAssert """(()"foo" & "bar"())""".fmt(')', '(') == "(foobar)"
-  doAssert "{}abc`testStr' `testFlt:1.2f' `1+1' ``".fmt('`', '\'') == "{}abcfoobar 3.14 2 `"
-  doAssert """x = '"foo" & "bar"'
-              y = '123 + 111'
-              z = '3 in {2..7}'
-           """.fmt('\'') ==
-           """x = foobar
-              y = 234
-              z = true
-           """
+    template doAssertFmt1(pattern, value: string) =
+      doAssertFmt(pattern, value, openStr, closeStr)
+
+    template rep2(s: string): string = s & s
+    template rep3(s: string): string = s & s & s
+    template rep4(s: string): string = s & s & s & s
+
+    #Test escaping
+    doAssertFmt1 openStr.rep2, openStr
+    doAssertFmt1 closeStr.rep2, closeStr
+    doAssertFmt1 openStr.rep2 & " ", openStr & " "
+    doAssertFmt1 closeStr.rep2 & " ", closeStr & " "
+    doAssertFmt1 " " & openStr.rep2, " " & openStr
+    doAssertFmt1 " " & closeStr.rep2, " " & closeStr
+    doAssertFmt1 " " & openStr.rep2 & " ", " " & openStr & " "
+    doAssertFmt1 " " & closeStr.rep2 & " ", " " & closeStr & " "
+    doAssertFmt1 openStr.rep4, openStr.rep2
+    doAssertFmt1 closeStr.rep4, closeStr.rep2
+    doAssertFmt1 openStr.rep2 & " " & openStr.rep2, openStr & " " & openStr
+    doAssertFmt1 closeStr.rep2 & " " & closeStr.rep2, closeStr & " " & closeStr
+    doAssertFmt1 openStr.rep2 & closeStr.rep2, openStr & closeStr
+    doAssertFmt1 closeStr.rep2 & openStr.rep2, closeStr & openStr
+
+    let
+      testInt = 123
+      testStr = "foobar"
+      testFlt = 3.141592
+
+    doAssertFmt1 openStr & "testInt" & closeStr, "123"
+    doAssertFmt1 openStr & "testFlt:1.2f" & closeStr, "3.14"
+    doAssertFmt1 "testInt" & openStr & "testInt" & closeStr, "testInt123"
+    doAssertFmt1 openStr & "testInt" & closeStr & openStr & "testStr" & closeStr, "123foobar"
+    doAssertFmt1 openStr & "testInt" & closeStr & "{}" & openStr & "testStr" & closeStr, "123{}foobar"
+    doAssertFmt1 openStr & "testInt" & closeStr & openStr.rep3 & "testStr" & closeStr, "123" & openStr & "foobar"
+    doAssertFmt1 openStr & "testInt" & closeStr.rep3 & openStr & "testStr" & closeStr, "123" & closeStr & "foobar"
+    doAssertFmt1 "α" & openStr.rep3 & "testInt" & closeStr.rep3 & "α" , "α" & openStr & "123" & closeStr & "α"
+    doAssertFmt1 closeStr.rep2 & openStr & "testStr" & closeStr & openStr.rep2, closeStr & "foobar" & openStr
+    doAssertFmt1 "{" & openStr.rep3 & "123 + 321" & closeStr.rep3 & "} {" &
+                 closeStr.rep2 & openStr & "3 in {2..7}" & closeStr & openStr.rep2 & "}",
+                 "{" & openstr & "444" & closeStr & "} {" & closeStr & "true" & openStr & "}"
+
+  macro testFmtEachStr(): untyped =
+    # "<".len == 1
+    # "β".len == 2
+    # "Д".len == 2
+    # "【".len == 3
+    # "♪".len == 3
+    # "🐵".len == 4
+    # "😀".len == 4
+    const testOpenCloseStrs = ["<", ">>", "β", "Д", "【", "】】", "♪", "🐵", "😀"]
+
+    result = newStmtList()
+    for i in testOpenCloseStrs:
+      for j in testOpenCloseStrs:
+        result.add newCall("testFmt", i.newLit, j.newLit)
+
+  testFmtEachStr()
