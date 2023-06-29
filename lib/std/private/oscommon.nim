@@ -7,7 +7,9 @@ when defined(nimPreviewSlimSystem):
 
 ## .. importdoc:: osdirs.nim, os.nim
 
-const weirdTarget* = defined(nimscript) or defined(js)
+const
+  weirdTarget* = defined(nimscript) or defined(js)
+  supportedOS = weirdTarget or defined(windows) or defined(posix)
 
 
 type
@@ -28,7 +30,7 @@ elif defined(posix):
   proc c_rename(oldname, newname: cstring): cint {.
     importc: "rename", header: "<stdio.h>".}
 else:
-  {.error: "OS module not ported to your operating system!".}
+  {.warning: "OS module not ported to your operating system!".}
 
 
 when weirdTarget:
@@ -44,7 +46,6 @@ elif defined(js):
   {.pragma: noNimJs, error: "this proc is not available on the js target".}
 else:
   {.pragma: noNimJs.}
-
 
 when defined(windows) and not weirdTarget:
   template wrapUnary*(varname, winApiProc, arg: untyped) =
@@ -91,29 +92,30 @@ when defined(posix) and not weirdTarget:
       elif not S_ISREG(s.st_mode):
         result = (pcLinkToFile, true)
 
-proc tryMoveFSObject*(source, dest: string, isDir: bool): bool {.noWeirdTarget.} =
-  ## Moves a file (or directory if `isDir` is true) from `source` to `dest`.
-  ##
-  ## Returns false in case of `EXDEV` error or `AccessDeniedError` on Windows (if `isDir` is true).
-  ## In case of other errors `OSError` is raised.
-  ## Returns true in case of success.
-  when defined(windows):
-    let s = newWideCString(source)
-    let d = newWideCString(dest)
-    result = moveFileExW(s, d, MOVEFILE_COPY_ALLOWED or MOVEFILE_REPLACE_EXISTING) != 0'i32
-  else:
-    result = c_rename(source, dest) == 0'i32
+when supportedOS:
+  proc tryMoveFSObject*(source, dest: string, isDir: bool): bool {.noWeirdTarget.} =
+    ## Moves a file (or directory if `isDir` is true) from `source` to `dest`.
+    ##
+    ## Returns false in case of `EXDEV` error or `AccessDeniedError` on Windows (if `isDir` is true).
+    ## In case of other errors `OSError` is raised.
+    ## Returns true in case of success.
+    when defined(windows):
+      let s = newWideCString(source)
+      let d = newWideCString(dest)
+      result = moveFileExW(s, d, MOVEFILE_COPY_ALLOWED or MOVEFILE_REPLACE_EXISTING) != 0'i32
+    else:
+      result = c_rename(source, dest) == 0'i32
 
-  if not result:
-    let err = osLastError()
-    let isAccessDeniedError =
-      when defined(windows):
-        const AccessDeniedError = OSErrorCode(5)
-        isDir and err == AccessDeniedError
-      else:
-        err == EXDEV.OSErrorCode
-    if not isAccessDeniedError:
-      raiseOSError(err, $(source, dest))
+    if not result:
+      let err = osLastError()
+      let isAccessDeniedError =
+        when defined(windows):
+          const AccessDeniedError = OSErrorCode(5)
+          isDir and err == AccessDeniedError
+        else:
+          err == EXDEV.OSErrorCode
+      if not isAccessDeniedError:
+        raiseOSError(err, $(source, dest))
 
 when not defined(windows):
   const maxSymlinkLen* = 1024
@@ -131,10 +133,9 @@ proc fileExists*(filename: string): bool {.rtl, extern: "nos$1",
     wrapUnary(a, getFileAttributesW, filename)
     if a != -1'i32:
       result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
-  else:
+  elif defined(posix):
     var res: Stat
     return stat(filename, res) >= 0'i32 and S_ISREG(res.st_mode)
-
 
 proc dirExists*(dir: string): bool {.rtl, extern: "nos$1", tags: [ReadDirEffect],
                                      noNimJs, sideEffect.} =
@@ -148,29 +149,30 @@ proc dirExists*(dir: string): bool {.rtl, extern: "nos$1", tags: [ReadDirEffect]
     wrapUnary(a, getFileAttributesW, dir)
     if a != -1'i32:
       result = (a and FILE_ATTRIBUTE_DIRECTORY) != 0'i32
-  else:
+  elif defined(posix):
     var res: Stat
     result = stat(dir, res) >= 0'i32 and S_ISDIR(res.st_mode)
 
 
-proc symlinkExists*(link: string): bool {.rtl, extern: "nos$1",
-                                          tags: [ReadDirEffect],
-                                          noWeirdTarget, sideEffect.} =
-  ## Returns true if the symlink `link` exists. Will return true
-  ## regardless of whether the link points to a directory or file.
-  ##
-  ## See also:
-  ## * `fileExists proc`_
-  ## * `dirExists proc`_
-  when defined(windows):
-    wrapUnary(a, getFileAttributesW, link)
-    if a != -1'i32:
-      # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
-      # may also be needed.
-      result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
-  else:
-    var res: Stat
-    result = lstat(link, res) >= 0'i32 and S_ISLNK(res.st_mode)
+when supportedOS:
+  proc symlinkExists*(link: string): bool {.rtl, extern: "nos$1",
+                                            tags: [ReadDirEffect],
+                                            noWeirdTarget, sideEffect.} =
+    ## Returns true if the symlink `link` exists. Will return true
+    ## regardless of whether the link points to a directory or file.
+    ##
+    ## See also:
+    ## * `fileExists proc`_
+    ## * `dirExists proc`_
+    when defined(windows):
+      wrapUnary(a, getFileAttributesW, link)
+      if a != -1'i32:
+        # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
+        # may also be needed.
+        result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
+    else:
+      var res: Stat
+      result = lstat(link, res) >= 0'i32 and S_ISLNK(res.st_mode)
 
 when defined(windows) and not weirdTarget:
   proc openHandle*(path: string, followSymlink=true, writeAccess=false): Handle =
