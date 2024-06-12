@@ -304,6 +304,15 @@ proc rotl32(x: uint32, r: int): uint32 {.inline.} =
   (x shl r) or (x shr (32 - r))
 
 proc murmurHash(x: openArray[byte]): Hash =
+  # x.len is always 0 or larger.
+  # But backend C compiler doesn't know that and need to care about
+  # negative x.len.
+  # That prevents some optimization.
+  # This branch tells C compiler that x.len is never negative after
+  # the branch.
+  if x.len < 0:
+    return
+
   # https://github.com/PeterScott/murmur3/blob/master/murmur3.c
   const
     c1 = 0xcc9e2d51'u32
@@ -311,10 +320,9 @@ proc murmurHash(x: openArray[byte]): Hash =
     n1 = 0xe6546b64'u32
     m1 = 0x85ebca6b'u32
     m2 = 0xc2b2ae35'u32
+    stepSize = 4 # 32-bit
   let
     size = len(x)
-    stepSize = 4 # 32-bit
-    n = size div stepSize
   var
     h1: uint32
     i = 0
@@ -327,7 +335,7 @@ proc murmurHash(x: openArray[byte]): Hash =
       k1 = (k1 shl 8) or (ord(x[i+j])).uint32
 
   # body
-  while i < n * stepSize:
+  while i < size - (stepSize - 1):
     var k1: uint32
 
     when nimvm:
