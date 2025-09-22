@@ -122,8 +122,11 @@ proc addParamOrResult(c: PContext, param: PSym, kind: TSymKind)
 proc instantiateBody(c: PContext, n, params: PNode, result, orig: PSym) =
   if n[bodyPos].kind != nkEmpty:
     let procParams = result.typ.n
+    #[
+    echo "instantiateBody: ", orig.name.s
     for i in 1..<procParams.len:
       addDecl(c, procParams[i].sym)
+    ]#
     maybeAddResult(c, result, result.ast)
 
     inc c.inGenericInst

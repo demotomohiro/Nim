@@ -597,7 +597,7 @@ proc strTableInclReportConflict*(t: var TStrTable, n: PSym;
     # So it is possible the very same sym is added multiple
     # times to the symbol table which we allow here with the 'it == n' check.
     if it.name.id == n.name.id:
-      if it == n: return nil
+      #if it == n: return nil
       replaceSlot = h
     h = nextTry(h, high(t.data))
   if replaceSlot >= 0:
